@@ -1,4 +1,4 @@
-# AMHMDA
+# MHMDA
 
 MHMDA is an innovative biologically interpretable multi-hop metapath and HeteroHyperNet (HHN) learning approach for predicting miRNA-disease associations. MHMDA follows three primary steps to achieve accurate miRNA-disease association identification. First, a "similarity-association-similarity" multi-hop meta-path learning method is introduced to capture specific associated pathway information by leveraging hierarchical attention perception, thereby connecting potentially associated miRNAs and diseases. Second, the HHN learning approach is employed to integrate both heterogeneous network and hyper network structures, effectively learning both direct and potential association information between miRNAs and diseases. Finally, the combination of the multi-hop meta-path with hierarchical attention and HHN allows for comprehensive learning of miRNA-disease associations from both local and global perspectives, significantly enhancing the richness and accuracy of the information. 
 
