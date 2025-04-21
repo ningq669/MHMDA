@@ -1,6 +1,7 @@
 from torch import nn as nn
 import torch
 from math import sqrt
+import torch.nn.functional as F
 
 
 class BatchNorm1d(nn.Module):
@@ -16,14 +17,17 @@ class BatchNorm1d(nn.Module):
 class BnodeEmbedding(nn.Module):
     def __init__(self, embedding, dropout, freeze=False):
         super(BnodeEmbedding, self).__init__()
-        self.embedding = nn.Embedding.from_pretrained(torch.as_tensor(embedding, dtype=torch.float32).detach(),
-                                                      freeze=freeze)
+        # Initialize embedding layer from pretrained embedding matrix
+        self.embedding = nn.Embedding.from_pretrained(
+            torch.as_tensor(embedding, dtype=torch.float32).detach(),
+            freeze=freeze
+        )
         self.dropout1 = nn.Dropout2d(p=dropout / 2)
         self.dropout2 = nn.Dropout(p=dropout / 2)
         self.p = dropout
 
     def forward(self, x):
-
+        # Apply embedding followed by dropout if specified
         if self.p > 0:
             x = self.dropout2(self.dropout1(self.embedding(x)))
         else:
@@ -43,10 +47,17 @@ class MLP(nn.Module):
         self.outDp = outDp
 
     def forward(self, x):
-        x = self.out(x)  # batchsize*featuresize
-        if self.outBn: x = self.bns(x) if len(x.shape) == 2 else self.bns(x.transpose(-1, -2)).transpose(-1, -2)
-        if self.outAct: x = self.actFunc(x)
-        if self.outDp: x = self.dropout(x)
+        x = self.out(x)
+        if self.outBn:
+            # Handle batch normalization for 2D and higher-dimensional inputs
+            if len(x.shape) == 2:
+                x = self.bns(x)
+            else:
+                x = self.bns(x.transpose(-1, -2)).transpose(-1, -2)
+        if self.outAct:
+            x = self.actFunc(x)
+        if self.outDp:
+            x = self.dropout(x)
         return x
 
 
@@ -64,74 +75,67 @@ class GCN(nn.Module):
         self.resnet = resnet
 
     def forward(self, x, L):
-        Z_zero = x  # batchsize*node_num*featuresize
-        m_all = Z_zero[:, 0, :].unsqueeze(dim=1)  # batchsize*1*featuesize
-        d_all = Z_zero[:, 1, :].unsqueeze(dim=1)
+        m_all = x[:, 0, :].unsqueeze(1)  # Collect features of node 0 across layers
+        d_all = x[:, 1, :].unsqueeze(1)  # Collect features of node 1 across layers
 
-        for i in range(self.gcnlayers):
-            a = self.out(torch.matmul(L, x))
+        for _ in range(self.gcnlayers):
+            a = self.out(torch.matmul(L, x))  # Graph convolution: aggregate neighbor info
             if self.outBn:
                 if len(L.shape) == 3:
                     a = self.bns(a.transpose(1, 2)).transpose(1, 2)
                 else:
                     a = self.bns(a)
-            if self.outAct: a = self.actFunc(a)
-            if self.outDp: a = self.dropout(a)
+            if self.outAct:
+                a = self.actFunc(a)
+            if self.outDp:
+                a = self.dropout(a)
             if self.resnet and a.shape == x.shape:
-                a += x
+                a += x  # Residual connection
             x = a
-            m_this = x[:, 0, :].unsqueeze(dim=1)
-            d_this = x[:, 1, :].unsqueeze(dim=1)
-            m_all = torch.cat((m_all, m_this), 1)
-            d_all = torch.cat((d_all, d_this), 1)
+            m_all = torch.cat((m_all, x[:, 0, :].unsqueeze(1)), 1)
+            d_all = torch.cat((d_all, x[:, 1, :].unsqueeze(1)), 1)
 
-        return m_all, d_all
+        return m_all, d_all  # Return aggregated features for selected nodes over all layers
 
 
 class LayerAtt(nn.Module):
     def __init__(self, inSize, outSize, gcnlayers):
         super(LayerAtt, self).__init__()
-        self.layers = gcnlayers + 1
-        self.inSize = inSize
-        self.outSize = outSize
+        self.layers = gcnlayers + 1  # include input layer
         self.q = nn.Linear(inSize, outSize)
         self.k = nn.Linear(inSize, outSize)
         self.v = nn.Linear(inSize, outSize)
         self.norm = 1 / sqrt(outSize)
         self.actfun1 = nn.Softmax(dim=1)
-        self.actfun2 = nn.ReLU()
-        self.attcnn = nn.Conv1d(in_channels=self.layers, out_channels=1, kernel_size=1, stride=1,
-                                bias=True)
+        self.attcnn = nn.Conv1d(in_channels=self.layers, out_channels=1, kernel_size=1, stride=1, bias=True)
 
     def forward(self, x):
         Q = self.q(x)
         K = self.k(x)
         V = self.v(x)
-        out = torch.bmm(Q, K.permute(0, 2, 1)) * self.norm
-        alpha = self.actfun1(out)  # according to gcn_layers
+        att_scores = torch.bmm(Q, K.transpose(1, 2)) * self.norm  # Scaled dot-product attention
+        alpha = self.actfun1(att_scores)  # Attention weights
         z = torch.bmm(alpha, V)
-        cnnz = self.attcnn(z)
+        cnnz = self.attcnn(z.transpose(1, 2))  # Fuse attention info via conv1d
         finalz = cnnz.squeeze(dim=1)
         return finalz
 
 
 class LayerAtt2(nn.Module):
     def __init__(self, inSize, outSize):
-        super(LayerAtt2, self).__init__()
-        self.inSize = inSize
-        self.outSize = outSize
-        self.q = nn.Linear(inSize, outSize)
-        self.k = nn.Linear(inSize, outSize)
-        self.v = nn.Linear(inSize, outSize)
-        self.norm = 1 / sqrt(outSize)
-        self.actfun1 = nn.Softmax(dim=1)
-        self.actfun2 = nn.ReLU()
+        super().__init__()
+        self.Q = nn.Linear(inSize, outSize)
+        self.K = nn.Linear(inSize, outSize)
+        self.V = nn.Linear(inSize, outSize)
+        self.norm = 1. / (outSize ** 0.5)
 
     def forward(self, x):
-        Q = self.q(x)
-        K = self.k(x)
-        V = self.v(x)
-        out = torch.mm(Q, K.t()) * self.norm  # Two-dimensional matrix multiplication
-        alpha = self.actfun1(out)
-        z = torch.mm(alpha, V)
-        return z
+        if x.dim() == 2:
+            x = x.unsqueeze(1)  # Add sequence dimension if missing
+        Q = self.Q(x)
+        K = self.K(x)
+        V = self.V(x)
+        att = torch.matmul(Q, K.transpose(1, 2)) * self.norm
+        att = F.softmax(att, dim=-1)
+        out = torch.matmul(att, V)
+        return out.mean(dim=1)  # Aggregate over sequence dimension
