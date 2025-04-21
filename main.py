@@ -19,26 +19,23 @@ class Config:
         self.inSize = 128
         self.outSize = 128
         self.hiddenSize = 32
-        self.nodeNum = 32
+        self.PVN = 1/32
         self.Dropout = 0.1
         self.hdnDropout = 0.1
         self.fcDropout = 0.1
         self.num_heads1 = 2
-        self.maskMDI = False
+        self.maskMDA = False
         self.device = torch.device('cuda')
 
 
 def main():
     param = Config()
-    simData = Simdata_pro(param)
-    train_data = loading_data(param)
-    # result = train_test(simData, train_data, param, state='test')
-    for i in range(25):
+    for i in range(1):
         simData = Simdata_pro(param)
         train_data = loading_data(param)
-        output_folder = f'./result/{i + 1}/'
+        output_folder = f'./savemodel/{i+1}/'
         os.makedirs(output_folder, exist_ok=True)
-        train_test(simData, train_data, param, state='valid', output_folder=output_folder)
+        train_test(simData, train_data, param, state='test', output_folder=output_folder)
 
 
 if __name__ == "__main__":
